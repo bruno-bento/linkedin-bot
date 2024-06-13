@@ -2,12 +2,10 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 require('dotenv').config();
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-(async (numPaginas = 1) => {
+async function scrapeLinkedInJobs() {
     const browser = await puppeteer.launch({ headless: false });
     const page = await browser.newPage();
-
-    await page.goto('https://www.linkedin.com/login');
+    await page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle2', timeout: 60000 });
 
     await page.setViewport({
         width: 900,
@@ -20,83 +18,56 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await page.waitForNavigation();
 
     await page.goto('https://www.linkedin.com/jobs/collections/recommended/');
+    await delay(3000);
 
-    await delay(3000); 
+    const jobData = [];
+    let hasMorePages = true;
+    let currentPage = 1;
 
-    const jobs = [];
-    let prevHeight = 0;
+    while (hasMorePages) {
+        const jobCards = await page.$$('li.jobs-search-results__list-item');
 
-    const collectJobData = async () => {
-        const newJobs = await page.evaluate(async () => {
-            const jobCards = document.querySelectorAll('.job-card-container');
-            const jobData = [];
-    
-            for (let job of jobCards) {
-                job.click();
-                await new Promise(resolve => setTimeout(resolve, 2000));
-    
-                const title = document.querySelector('.job-details-jobs-unified-top-card__job-title')?.innerText.trim();
-                const company = document.querySelector('.job-details-jobs-unified-top-card__company-name')?.innerText.trim();
-                const location = document.querySelector('.job-details-jobs-unified-top-card__job-insight')?.innerText.trim();
-                const description = document.querySelector('.jobs-description--reformatted .jobs-description-content__text')?.innerText.trim();
-    
-                // Ensure job data is not duplicated by comparing the company
-                if (!jobData.some(job => job.company === company)) {
-                    jobData.push({ title, company, location, description });
-                }
-            }
-    
-            return jobData;
-        });
-    
-        jobs.push(...newJobs);
-    };
+        for (let jobCard of jobCards) {
+            await jobCard.click();
+            await delay(200);
 
-    while (true) {
-        await collectJobData();
+            const title = await page.evaluate(() => {
+                return document.querySelector('.job-details-jobs-unified-top-card__job-title')?.innerText.trim();
+            });
 
-        const currentHeight = await page.evaluate(() => {
-            const container = document.querySelector('.jobs-search-results-list');
-            return container.scrollHeight;
-        });
-        console.log("currentHeight", currentHeight)
-        console.log("prevHeight", prevHeight)
-        if (currentHeight == prevHeight) {
-            break; 
+            const company = await page.evaluate(() => {
+                return document.querySelector('.job-details-jobs-unified-top-card__company-name')?.innerText.trim();
+            });
+
+            const location = await page.evaluate(() => {
+                return document.querySelector('.job-details-jobs-unified-top-card__job-insight')?.innerText.trim();
+            });
+
+            const description = await page.evaluate(() => {
+                return document.querySelector('.jobs-description--reformatted .jobs-description-content__text')?.innerText.trim();
+            });
+
+            //if (!jobData.some(job => job.company === company && job.title === title)) {
+            jobData.push({ title, company, location, description });
+            //}
         }
-
-        prevHeight = currentHeight;
-
-        await page.evaluate(() => {
-            const container = document.querySelector('.jobs-search-results-list');
-            container.scrollBy(0, container.scrollHeight);
-        });
-
-        await delay(2000);
+        const paginationButtons = await page.$$('ul.artdeco-pagination__pages li button');
+        if (currentPage < paginationButtons.length) {
+            await paginationButtons[currentPage].click();
+            currentPage++;
+            await delay(4000); 
+        } else {
+            hasMorePages = false;
+        }
     }
 
-    fs.writeFileSync('jobs.json', JSON.stringify(jobs, null, 2));
-
-    const totalVagas = jobs.length;
-    const vagasComRemuneracao = jobs.filter(job => job.description && /[\d\.\,]+/.test(job.description)).length;
-    const remuneracoes = jobs.map(job => {
-        if (job.description) {
-            const match = job.description.match(/[\d\.\,]+/);
-            return match ? parseFloat(match[0].replace(',', '.')) : null;
-        }
-        return null;
-    }).filter(value => value !== null);
-    const mediaRemuneracao = remuneracoes.reduce((a, b) => a + b, 0) / remuneracoes.length;
-    const homeOffice = jobs.filter(job => job.location && /home office|remoto/i.test(job.location)).length;
-    const hibrido = jobs.filter(job => job.location && /híbrido/i.test(job.location)).length;
-    const presencial = jobs.filter(job => job.location && !/home office|remoto|híbrido/i.test(job.location)).length;
-
-    console.log(`Total de vagas analisadas: ${totalVagas}`);
-    console.log(`Quantas com remuneração explícita: ${vagasComRemuneracao}`);
-    console.log(`Valor médio da remuneração: ${mediaRemuneracao.toFixed(2)}`);
-    console.log(`Quantas híbrido: ${hibrido}`);
-    console.log(`Quantas home office: ${homeOffice}`);
-    console.log(`Quantas presencial: ${presencial}`);
-
     await browser.close();
-})();
+    console.log(jobData.length)
+    fs.writeFileSync('jobs.json', JSON.stringify(jobData, null, 2));
+
+    console.log('Job data saved to jobs.json');
+}
+
+const delay = (time) => new Promise(resolve => setTimeout(resolve, time));
+
+scrapeLinkedInJobs();

@@ -18,18 +18,18 @@ async function scrapeLinkedInJobs() {
     await page.waitForNavigation();
 
     await page.goto('https://www.linkedin.com/jobs/collections/recommended/');
-    await delay(3000); 
+    await delay(3000);
 
     const jobData = [];
     let hasMorePages = true;
+    let currentPage = 1;
 
     while (hasMorePages) {
-        const jobCards = await page.$$('.job-card-container');
+        const jobCards = await page.$$('li.jobs-search-results__list-item');
 
         for (let jobCard of jobCards) {
             await jobCard.click();
-            await page.waitForTimeout(2000);
-
+            await page.waitForSelector('.job-details-jobs-unified-top-card__job-title', { timeout: 5000 }); // Wait for job details to be visible
             const title = await page.evaluate(() => {
                 return document.querySelector('.job-details-jobs-unified-top-card__job-title')?.innerText.trim();
             });
@@ -46,27 +46,25 @@ async function scrapeLinkedInJobs() {
                 return document.querySelector('.jobs-description--reformatted .jobs-description-content__text')?.innerText.trim();
             });
 
-            if (!jobData.some(job => job.company === company && job.title === title)) {
-                jobData.push({ title, company, location, description });
-            }
+            //if (!jobData.some(job => job.company === company && job.title === title)) {
+            jobData.push({ title, company, location, description });
+            //}
         }
-
-        hasMorePages = await page.evaluate(() => {
-            const nextPageButton = document.querySelector('.artdeco-pagination__button--next');
-            if (nextPageButton && !nextPageButton.disabled) {
-                nextPageButton.click();
-                return true;
-            }
-            return false;
-        });
-
-        if (hasMorePages) {
-            await page.waitForTimeout(3000);
+        const paginationButtons = await page.$$('ul.artdeco-pagination__pages li button');
+        if (currentPage < paginationButtons.length) {
+            await Promise.all([
+                page.waitForResponse(response => response.url().includes('/jobs/') && response.status() === 200), // Wait for a network response indicating the next page has loaded
+                paginationButtons[currentPage].click()
+            ]);
+            await page.waitForSelector('li.jobs-search-results__list-item'); // Ensure job cards are visible on the new page
+            currentPage++;
+        } else {
+            hasMorePages = false;
         }
     }
 
     await browser.close();
-
+    console.log(jobData.length)
     fs.writeFileSync('jobs.json', JSON.stringify(jobData, null, 2));
 
     console.log('Job data saved to jobs.json');
